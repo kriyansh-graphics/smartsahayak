@@ -19,7 +19,7 @@ function App() {
       toolName: "Hindi Words Dictation",
       toolDescription:
         "Listen to Hindi words and practise writing their correct spellings. Improve your Hindi vocabulary and spelling skills.",
-      start: "Start Dictation Practice",
+      start: "Start Dictation Practice first",
       comingSoon: "More useful tools coming soon!",
       comingDescription:
         "We will keep adding simple and useful utilities to SmartSahayak.",
@@ -95,14 +95,8 @@ function App() {
         <section className="hero container" id="home">
           <div className="hero-content">
             <span className="welcome-label">{t.welcome}</span>
-
             <h1>{t.heading}</h1>
-
             <p>{t.description}</p>
-
-            <a href="#dictation" className="primary-button">
-              {t.start}
-            </a>
           </div>
         </section>
 
@@ -123,9 +117,6 @@ function App() {
                 >
                 {t.start}
               </button>
-              <span className="development-note">
-                Dictation utility is under development.
-              </span>
             </div>
 
             <div className="tool-decoration">अ आ इ ई</div>
