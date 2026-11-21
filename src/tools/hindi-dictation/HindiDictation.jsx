@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./dictation.css";
 
@@ -16,7 +15,8 @@ function parseCsv(text) {
   for (const row of rows) {
     if (!row.trim()) continue;
 
-    const cells = row.match(/("(?:[^"]|"")*"|[^,]*)(,|$)/g) || [];
+    const cells =
+      row.match(/("(?:[^"]|"")*"|[^,]*)(,|$)/g) || [];
 
     let value = cells
       .map((cell) => cell.replace(/,$/, "").trim())
@@ -44,6 +44,21 @@ function parseCsv(text) {
   return words;
 }
 
+function shuffleWords(words) {
+  const shuffled = [...words];
+
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const randomIndex = Math.floor(Math.random() * (i + 1));
+
+    [shuffled[i], shuffled[randomIndex]] = [
+      shuffled[randomIndex],
+      shuffled[i],
+    ];
+  }
+
+  return shuffled;
+}
+
 function HindiDictation({ onBack }) {
   const [inputMode, setInputMode] = useState("manual");
   const [manualText, setManualText] = useState("");
@@ -54,7 +69,12 @@ function HindiDictation({ onBack }) {
   const [delay, setDelay] = useState(5);
   const [repeatDelay, setRepeatDelay] = useState(3);
   const [autoNext, setAutoNext] = useState(true);
+
+  // Sequential or Random dictation order.
+  const [orderMode, setOrderMode] = useState("sequential");
+
   const [prepared, setPrepared] = useState(false);
+  const [preparedWords, setPreparedWords] = useState([]);
 
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -77,6 +97,10 @@ function HindiDictation({ onBack }) {
 
   const currentWords =
     inputMode === "manual" ? manualWords : csvWords;
+
+  // Words actually used during the current dictation session.
+  // Before preparation, this is empty.
+  const playbackWords = preparedWords;
 
   const isActive =
     playbackStatus === "playing" ||
@@ -135,11 +159,16 @@ function HindiDictation({ onBack }) {
       }
 
       if (pausedRef.current) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 100)
+        );
         continue;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) =>
+        setTimeout(resolve, 100)
+      );
+
       elapsed += 100;
     }
 
@@ -147,9 +176,9 @@ function HindiDictation({ onBack }) {
   }
 
   async function startPlayback(startIndex) {
-    if (currentWords.length === 0) return;
+    if (playbackWords.length === 0) return;
 
-    if (startIndex >= currentWords.length) {
+    if (startIndex >= playbackWords.length) {
       setPlaybackStatus("completed");
       return;
     }
@@ -167,14 +196,14 @@ function HindiDictation({ onBack }) {
 
     for (
       let wordIndex = startIndex;
-      wordIndex < currentWords.length;
+      wordIndex < playbackWords.length;
       wordIndex++
     ) {
       if (session !== sessionRef.current) return;
 
       setCurrentIndex(wordIndex);
 
-      const word = currentWords[wordIndex];
+      const word = playbackWords[wordIndex];
 
       for (
         let repetition = 1;
@@ -194,42 +223,27 @@ function HindiDictation({ onBack }) {
 
         setCurrentRepeat(repetition);
 
-        
-        // try {
-        //   await speakText(word, selectedVoice);
-        // } catch (error) {
-        //   if (session !== sessionRef.current) return;
-
-        //   console.error("Speech error:", error);
-        //   setPlaybackStatus("error");
-        //   return;
-        // }
-
-        // if (session !== sessionRef.current) return;
-
-
-
-          try {
-              await speakText(word, selectedVoice);
-          } catch (error) {
-              if (session !== sessionRef.current) return;
-
-              console.error("Speech error:", error);
-              setPlaybackStatus("error");
-              return;
-          }
-
+        try {
+          await speakText(word, selectedVoice);
+        } catch (error) {
           if (session !== sessionRef.current) return;
 
-          // Wait between repetitions of the same word.
-          if (repetition < repeatCount && repeatDelay > 0) {
-              const completed = await waitForDelay(
-                  repeatDelay * 1000,
-                  session
-              );
+          console.error("Speech error:", error);
+          setPlaybackStatus("error");
+          return;
+        }
 
-              if (!completed) return;
-          }
+        if (session !== sessionRef.current) return;
+
+        // Wait between repetitions of the same word.
+        if (repetition < repeatCount && repeatDelay > 0) {
+          const completed = await waitForDelay(
+            repeatDelay * 1000,
+            session
+          );
+
+          if (!completed) return;
+        }
       }
 
       // Manual mode: wait for the user to request the next word.
@@ -239,7 +253,10 @@ function HindiDictation({ onBack }) {
       }
 
       // Wait before moving to the next word.
-      if (wordIndex < currentWords.length - 1 && delay > 0) {
+      if (
+        wordIndex < playbackWords.length - 1 &&
+        delay > 0
+      ) {
         const completed = await waitForDelay(
           delay * 1000,
           session
@@ -276,7 +293,9 @@ function HindiDictation({ onBack }) {
   }
 
   function handleNextWord() {
-    if (currentIndex >= currentWords.length - 1) {
+    if (playbackWords.length === 0) return;
+
+    if (currentIndex >= playbackWords.length - 1) {
       sessionRef.current += 1;
       stopSpeech();
       pausedRef.current = false;
@@ -288,6 +307,8 @@ function HindiDictation({ onBack }) {
   }
 
   function handleRestart() {
+    // Restart uses the same prepared order.
+    // Random order is NOT reshuffled here.
     startPlayback(0);
   }
 
@@ -327,31 +348,60 @@ function HindiDictation({ onBack }) {
       setFileName(file.name);
       setInputMode("csv");
       setPrepared(false);
+      setPreparedWords([]);
       handleStop();
     } catch {
-      alert("Unable to read this file. Please try another CSV file.");
+      alert(
+        "Unable to read this file. Please try another CSV file."
+      );
     }
   }
 
   function prepareWordList() {
     if (currentWords.length === 0) {
-      alert("Please enter or upload some Hindi words first.");
+      alert(
+        "Please enter or upload some Hindi words first."
+      );
       return;
     }
 
     handleStop();
+
+    let wordsForPlayback;
+
+    if (orderMode === "random") {
+      wordsForPlayback = shuffleWords(currentWords);
+    } else {
+      wordsForPlayback = [...currentWords];
+    }
+
+    setPreparedWords(wordsForPlayback);
+    setCurrentIndex(0);
+    setCurrentRepeat(0);
     setPrepared(true);
+    setPlaybackStatus("idle");
+  }
+
+  function handleOrderModeChange(event) {
+    const newMode = event.target.value;
+
+    // Changing the order means the list needs to be prepared again.
+    handleStop();
+    setOrderMode(newMode);
+    setPrepared(false);
+    setPreparedWords([]);
   }
 
   function changeMode(mode) {
     handleStop();
     setInputMode(mode);
     setPrepared(false);
+    setPreparedWords([]);
   }
 
   const progress =
-    currentWords.length > 0
-      ? ((currentIndex + 1) / currentWords.length) * 100
+    playbackWords.length > 0
+      ? ((currentIndex + 1) / playbackWords.length) * 100
       : 0;
 
   return (
@@ -375,8 +425,8 @@ function HindiDictation({ onBack }) {
           <h1>हिंदी शब्द श्रुतलेख</h1>
 
           <p>
-            Prepare your word list and practise Hindi spelling through
-            dictation.
+            Prepare your word list and practise Hindi spelling
+            through dictation.
           </p>
         </div>
 
@@ -384,12 +434,15 @@ function HindiDictation({ onBack }) {
           <h2>1. Prepare your word list</h2>
 
           <p className="panel-description">
-            Upload a CSV file or type/paste your Hindi words below.
+            Upload a CSV file or type/paste your Hindi words
+            below.
           </p>
 
           <div className="input-tabs">
             <button
-              className={inputMode === "manual" ? "selected" : ""}
+              className={
+                inputMode === "manual" ? "selected" : ""
+              }
               onClick={() => changeMode("manual")}
               disabled={isActive}
             >
@@ -397,7 +450,9 @@ function HindiDictation({ onBack }) {
             </button>
 
             <button
-              className={inputMode === "csv" ? "selected" : ""}
+              className={
+                inputMode === "csv" ? "selected" : ""
+              }
               onClick={() => changeMode("csv")}
               disabled={isActive}
             >
@@ -418,22 +473,29 @@ function HindiDictation({ onBack }) {
                 onChange={(event) => {
                   setManualText(event.target.value);
                   setPrepared(false);
+                  setPreparedWords([]);
                   setCurrentIndex(0);
                   setPlaybackStatus("idle");
                 }}
-                placeholder={"कमल\nमछली\nविद्यालय\nकिताब\nआकाश"}
+                placeholder={
+                  "कमल\nमछली\nविद्यालय\nकिताब\nआकाश"
+                }
                 rows={9}
               />
 
               <small>
-                Enter one word per line. Empty lines are ignored.
+                Enter one word per line. Empty lines are
+                ignored.
               </small>
             </div>
           )}
 
           {inputMode === "csv" && (
             <div className="upload-area">
-              <label htmlFor="csv-file" className="upload-label">
+              <label
+                htmlFor="csv-file"
+                className="upload-label"
+              >
                 <span className="upload-icon">📄</span>
                 <strong>Select a CSV file</strong>
                 <span>Choose a file from your device</span>
@@ -454,7 +516,8 @@ function HindiDictation({ onBack }) {
               )}
 
               <small>
-                Use a CSV file with one Hindi word in each row.
+                Use a CSV file with one Hindi word in each
+                row.
               </small>
             </div>
           )}
@@ -485,7 +548,10 @@ function HindiDictation({ onBack }) {
                   setRepeatCount(
                     Math.min(
                       10,
-                      Math.max(1, Number(event.target.value) || 1)
+                      Math.max(
+                        1,
+                        Number(event.target.value) || 1
+                      )
                     )
                   )
                 }
@@ -508,7 +574,10 @@ function HindiDictation({ onBack }) {
                   setDelay(
                     Math.min(
                       60,
-                      Math.max(0, Number(event.target.value) || 0)
+                      Math.max(
+                        0,
+                        Number(event.target.value) || 0
+                      )
                     )
                   )
                 }
@@ -516,25 +585,56 @@ function HindiDictation({ onBack }) {
             </div>
 
             <div className="setting-item">
-                          <label htmlFor="repeat-delay">
-                              Delay between repetitions (seconds)
-                          </label>
+              <label htmlFor="repeat-delay">
+                Delay between repetitions (seconds)
+              </label>
 
-                          <input
-                              id="repeat-delay"
-                              type="number"
-                              min="0"
-                              max="60"
-                              disabled={isActive}
-                              value={repeatDelay}
-                              onChange={(event) =>
-                                  setRepeatDelay(
-                                      Math.min(60, Math.max(0, Number(event.target.value) || 0))
-                                  )
-                              }
-                          />
+              <input
+                id="repeat-delay"
+                type="number"
+                min="0"
+                max="60"
+                disabled={isActive}
+                value={repeatDelay}
+                onChange={(event) =>
+                  setRepeatDelay(
+                    Math.min(
+                      60,
+                      Math.max(
+                        0,
+                        Number(event.target.value) || 0
+                      )
+                    )
+                  )
+                }
+              />
             </div>
 
+            <div className="setting-item">
+              <label htmlFor="order-mode">
+                Order of dictation
+              </label>
+
+              <select
+                id="order-mode"
+                value={orderMode}
+                disabled={isActive}
+                onChange={handleOrderModeChange}
+              >
+                <option value="sequential">
+                  Sequential
+                </option>
+
+                <option value="random">
+                  Random
+                </option>
+              </select>
+
+              <small>
+                Sequential uses the original order. Random
+                creates a new order when the list is prepared.
+              </small>
+            </div>
           </div>
 
           <label className="auto-next-setting">
@@ -549,8 +649,10 @@ function HindiDictation({ onBack }) {
 
             <span>
               <strong>Automatic next word</strong>
+
               <small>
-                Move to the next word automatically after repetitions.
+                Move to the next word automatically after
+                repetitions.
               </small>
             </span>
           </label>
@@ -580,8 +682,9 @@ function HindiDictation({ onBack }) {
               </select>
             ) : (
               <small>
-                No Hindi voice is currently listed. The browser's
-                default Hindi speech setting will be used.
+                No Hindi voice is currently listed. The
+                browser's default Hindi speech setting will be
+                used.
               </small>
             )}
           </div>
@@ -593,7 +696,8 @@ function HindiDictation({ onBack }) {
               <h2>3. Word list preview</h2>
 
               <p className="panel-description">
-                Check your words before preparing the dictation.
+                Check your words before preparing the
+                dictation.
               </p>
             </div>
 
@@ -604,11 +708,13 @@ function HindiDictation({ onBack }) {
 
           {currentWords.length > 0 ? (
             <ol className="word-preview">
-              {currentWords.slice(0, 20).map((word, index) => (
-                <li key={`${index}-${word}`}>
-                  <span>{word}</span>
-                </li>
-              ))}
+              {currentWords
+                .slice(0, 20)
+                .map((word, index) => (
+                  <li key={`${index}-${word}`}>
+                    <span>{word}</span>
+                  </li>
+                ))}
             </ol>
           ) : (
             <div className="empty-preview">
@@ -625,15 +731,29 @@ function HindiDictation({ onBack }) {
           <button
             className="prepare-button"
             onClick={prepareWordList}
-            disabled={currentWords.length === 0 || isActive}
+            disabled={
+              currentWords.length === 0 || isActive
+            }
           >
             Prepare Word List
           </button>
 
           {prepared && (
             <div className="success-message">
-              Your word list is ready! {currentWords.length} words
-              have been prepared successfully.
+              Your word list is ready!{" "}
+              {preparedWords.length} words have been prepared
+              successfully.
+
+              <br />
+
+              <small>
+                Dictation order:{" "}
+                <strong>
+                  {orderMode === "random"
+                    ? "Random"
+                    : "Sequential"}
+                </strong>
+              </small>
             </div>
           )}
         </section>
@@ -645,17 +765,25 @@ function HindiDictation({ onBack }) {
             <div className="playback-progress">
               <div className="progress-information">
                 <span>
-                  Word {Math.min(currentIndex + 1, currentWords.length)}
-                  {" "}of {currentWords.length}
+                  Word{" "}
+                  {Math.min(
+                    currentIndex + 1,
+                    playbackWords.length
+                  )}{" "}
+                  of {playbackWords.length}
                 </span>
 
-                <strong>{Math.round(progress)}%</strong>
+                <strong>
+                  {Math.round(progress)}%
+                </strong>
               </div>
 
               <div className="progress-track">
                 <div
                   className="progress-fill"
-                  style={{ width: `${progress}%` }}
+                  style={{
+                    width: `${progress}%`,
+                  }}
                 />
               </div>
             </div>
@@ -664,15 +792,20 @@ function HindiDictation({ onBack }) {
               <span>Current word</span>
 
               <strong>
-                {currentWords[currentIndex] || "—"}
+                {playbackWords[currentIndex] || "—"}
               </strong>
 
               <small>
-                Repetition: {currentRepeat} / {repeatCount}
+                Repetition: {currentRepeat} /{" "}
+                {repeatCount}
               </small>
             </div>
 
-            <p className="playback-status" role="status" aria-live="polite">
+            <p
+              className="playback-status"
+              role="status"
+              aria-live="polite"
+            >
               {playbackStatus === "idle" &&
                 "Ready to start dictation."}
 
@@ -705,13 +838,17 @@ function HindiDictation({ onBack }) {
                   playbackStatus === "error"
                 }
               >
-                {playbackStatus === "paused" ? "Resume" : "Start"}
+                {playbackStatus === "paused"
+                  ? "Resume"
+                  : "Start"}
               </button>
 
               <button
                 className="secondary-button"
                 onClick={handlePause}
-                disabled={playbackStatus !== "playing"}
+                disabled={
+                  playbackStatus !== "playing"
+                }
               >
                 Pause
               </button>
